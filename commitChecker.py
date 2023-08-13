@@ -1,7 +1,7 @@
 import smtplib
 import requests
-from github import Github, GithubException
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timezone, timedelta
 import os
 from dotenv import load_dotenv
 
@@ -11,7 +11,7 @@ load_dotenv()
 def send_email_notification():
     print("No commits today!")
     subject = "Commit Reminder"
-    body = "No commits today!"
+    body = "No commits today! You have until 7pm to commit something!"
     msg = f"Subject: {subject}\n\n{body}"
 
     with smtplib.SMTP(os.getenv("EMAIL_HOST"), os.getenv("EMAIL_PORT")) as server:
@@ -37,36 +37,54 @@ def get_repos(access_token):
 
 def check_commits():
     access_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
-    g = Github(access_token, timeout=60)
-    user = g.get_user(os.getenv("GITHUB_USERNAME"))
+    username = os.getenv("GITHUB_USERNAME")
+    url = f"https://api.github.com/users/{username}/events"
+    headers = {"Authorization": f"token {access_token}"}
     since_date = datetime.now(timezone.utc).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
-    print(f"Checking commits since {since_date}...")
 
-    repos = get_repos(access_token)
-    for repo_data in repos:
-        if repo_data["size"] == 0:
-            continue
-        repo = g.get_repo(repo_data["full_name"])
-        try:
-            for branch in repo.get_branches():
-                commits = repo.get_commits(
-                    sha=branch.name, since=since_date, author=user
-                )
-                for commit in commits:
-                    print(
-                        f"Found commit at {commit.commit.author.date} in {repo.full_name}: {commit.commit.message}"
-                    )
-                    return
-        except GithubException as e:
-            if e.status == 409:
-                print(f"Skipping empty repository: {repo.full_name}")
-                continue
-            else:
-                raise e
+    print(f"Since Date: {since_date}")
 
-    send_email_notification()
+    response = requests.get(url, headers=headers, params={"since": since_date})
+    events = response.json()
 
+    commits_today = False
+    for event in events:
+        if event["type"] == "PushEvent":
+            commit_date = datetime.fromisoformat(
+                event["created_at"].replace("Z", "+00:00")
+            )
+            if commit_date < since_date:
+                continue  # Skip this commit as it's before the since date
+            commits_today = True
+            print(
+                f"Found commit in {event['repo']['name']}: {event['payload']['commits'][0]['message']}, time: {event['created_at']}"
+            )
+            break
+
+    if not commits_today:
+        print("No commits today!")
+        send_email_notification()
+
+
+def check_rate_limit(access_token):
+    url = "https://api.github.com/users/octocat"  # You can replace 'octocat' with your username
+    headers = {"Authorization": f"token {access_token}"}
+    response = requests.get(url, headers=headers)
+
+    rate_limit = response.headers["x-ratelimit-limit"]
+    remaining = response.headers["x-ratelimit-remaining"]
+    used = response.headers["x-ratelimit-used"]
+    reset_time = datetime.fromtimestamp(int(response.headers["x-ratelimit-reset"]))
+
+    print(f"Rate Limit: {rate_limit}")
+    print(f"Remaining: {remaining}")
+    print(f"Used: {used}")
+    print(f"Reset Time: {reset_time}")
+
+
+# access_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
+# check_rate_limit(access_token)
 
 check_commits()
