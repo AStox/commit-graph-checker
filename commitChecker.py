@@ -8,10 +8,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def send_email_notification():
+def send_email_notification(
+    subject="Commit Reminder", body="You have until 7pm to commit something!"
+):
     print("No commits today!")
-    subject = "Commit Reminder"
-    body = "No commits today! You have until 7pm to commit something!"
     msg = f"Subject: {subject}\n\n{body}"
 
     with smtplib.SMTP(os.getenv("EMAIL_HOST"), os.getenv("EMAIL_PORT")) as server:
@@ -44,20 +44,32 @@ def check_commits():
         hour=0, minute=0, second=0, microsecond=0
     )
 
-    print(f"Since Date: {since_date}")
+    print(f"Since:    {since_date}")
+    print(f"now:      {datetime.now(timezone.utc)}")
 
     response = requests.get(url, headers=headers, params={"since": since_date})
     events = response.json()
 
     commits_today = False
     for event in events:
+        # print push events and the time it happened and the commit message
         if event["type"] == "PushEvent":
+            print(
+                event["type"],
+                event["created_at"],
+                event["payload"]["commits"][0]["message"],
+            )
             commit_date = datetime.fromisoformat(
                 event["created_at"].replace("Z", "+00:00")
             )
             if commit_date < since_date:
                 continue  # Skip this commit as it's before the since date
             commits_today = True
+            # email number of commits
+            send_email_notification(
+                subject="Commit Reminder",
+                body=f"You committed something today at {commit_date}! In total, you committed {len(event['payload']['commits'])} times.",
+            )
             print(
                 f"Found commit in {event['repo']['name']}: {event['payload']['commits'][0]['message']}, time: {event['created_at']}"
             )
